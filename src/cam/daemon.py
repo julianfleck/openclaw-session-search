@@ -340,17 +340,23 @@ def get_indexed_sessions(force_reload: bool = False) -> Dict[str, float]:
         for line in STATE_FILE.read_text().strip().split('\n'):
             if not line:
                 continue
-            # Try to parse as new format: path:mtime
-            # Split from right to handle paths that might contain colons
-            parts = line.rsplit(':', 1)
-            if len(parts) == 2:
-                mtime_str = parts[1]
-                # Check if the last part looks like a timestamp (numeric, possibly with decimal)
-                if mtime_str.replace('.', '').isdigit() and len(mtime_str) > 8:
-                    indexed[parts[0]] = float(mtime_str)
-                    continue
-            # Legacy format - path only, use mtime=0
-            indexed[line] = 0.0
+            # Format: path:mtime. Paths may contain ':' (Windows drive, etc.) so split from the right.
+            # Historical bug: a line with mtime=0.0 was treated as legacy (path-only) and the writer
+            # re-emitted it as `<line>:0.0` each cycle, growing unboundedly. Defensive parse: peel
+            # all trailing ':<float>' segments and keep the leftmost (= original) mtime.
+            head, mtime, found = line, 0.0, False
+            while ':' in head:
+                pre, _, tail = head.rpartition(':')
+                try:
+                    mtime = float(tail)
+                    head = pre
+                    found = True
+                except ValueError:
+                    break
+            if found:
+                indexed[head] = mtime
+            else:
+                indexed[line] = 0.0
 
     _indexed_sessions_cache = indexed
     _indexed_sessions_mtime = current_mtime
